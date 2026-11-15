@@ -23,6 +23,7 @@ DEFAULT_COLUMN_MAP = {
     "商品名": "raw_product_name",
     "等级": "grade",
     "产地": "origin",
+    "适用区域": "region",
     "包装": "package_desc",
     "单位": "unit",
     "单件净重kg": "net_weight_per_unit_kg",
@@ -130,6 +131,7 @@ def validate_quote_fields(fields: dict, unit_table: dict):
     if not clean["grade"]:
         pending.append("缺等级")
     clean["origin"] = fields.get("origin") or None
+    clean["region"] = fields.get("region") or None
     clean["package_desc"] = fields.get("package") or fields.get("package_desc") or None
     clean["processing_status"] = fields.get("processing_status") or None
 

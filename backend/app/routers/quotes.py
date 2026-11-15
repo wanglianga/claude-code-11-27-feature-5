@@ -26,6 +26,7 @@ def _quote_out(q: Quote, today=None):
         "mapping_status": q.mapping_status,
         "grade": q.grade,
         "origin": q.origin,
+        "region": q.region,
         "package_desc": q.package_desc,
         "unit": q.unit,
         "unit_raw": q.unit_raw,

@@ -2,9 +2,12 @@
 
 面向食堂采购员：把各来源报价（供应商箱价、市场公斤价、带泥毛菜/净菜、不同起订量与费用规则）换算成**相同等级、相同加工状态、相同可用数量口径下的可比成本**，并支持采用、验收与偏差归因的全流程留痕。
 
+**feature-5 新增「食谱成本事实关联与变化解释」**：把食谱版本、原料语义映射、出成率证据、供应商报价绑定到**只读的餐期选价快照**（不采用“当前主数据回算历史”的做法），并在固定快照上按 `份量→价格→出成率→规格→映射` 分解单位成本变化，使每一分成本差额都能回查食谱版本、映射关系、报价快照、出成率证据与分解顺序。
+
 - 后端：Python 3.12 + FastAPI + SQLAlchemy + PostgreSQL
 - 前端：Vue 3 + Vite + Element Plus
 - 不做图片识别、不访问真实商家；只接收随题 CSV / JSON / 结构化市场快照文件
+- 不搜索替换组合、不调整菜单、不占用库存、不生成采购数量或下单指令；只交付成本数据的来源解释
 
 ## 一键启动（Docker Compose）
 
@@ -21,10 +24,10 @@ docker compose up --build
 前置：PostgreSQL（`127.0.0.1:5432`，库/用户/密码均为 `ccdev`）、Python 3.12、Node 22。
 
 ```bash
-# 后端（首次会自动建表；种子数据需执行一次导入）
+# 后端（首次会自动建表；种子数据需执行一次导入，含 feature-5 食谱成本样例）
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -c "from app.database import Base, engine, SessionLocal; from app.main import app; from app.seed import seed_if_empty; Base.metadata.create_all(bind=engine); seed_if_empty(SessionLocal())"
+.venv/bin/python -c "from app.database import Base, engine, SessionLocal; from app.main import app; from app.seed import seed_if_empty; from app.seed_recipe import seed_recipe_domain; Base.metadata.create_all(bind=engine); db=SessionLocal(); seed_if_empty(db); seed_recipe_domain(db); db.close()"
 .venv/bin/uvicorn app.main:app --reload --port 8000
 
 # 前端（另开终端，已配置 /api 代理到 8000）
@@ -59,12 +62,30 @@ npm run dev        # http://localhost:5173
 - **市场参考价**：「市场参考价」土豆/一级/净菜 → 张记(2.45)、李记(2.2) 两家独立卖方归并后中位数 2.325；王五、赵六为转载，不增加权重。
 - **过期与起订量**：Q-A-005 已过期、宏发大白菜起订 20 筐，分别在「不可采用报价」中说明原因。
 
+## feature-5 验证方式（食谱成本事实关联与变化解释）
+
+种子数据在启动时自动装配 5 道菜、食谱版本、语义映射、出成率证据账与餐期快照，覆盖题目要求的**五类验收样例**，均为真实运行结果。导航栏新增「食谱事实 / 餐期快照 / 成本桥接 / 覆盖质量」四个页面。
+
+1. **配方改版**：`酸辣土豆丝` 食谱 V1（2026-11-01 生效，100 份/土豆 15kg）→ V2（2026-11-10 生效，120 份/21.6kg）。「成本桥接」选快照 #1→#2，固定顺序分解，单位成本 0.342→0.4104 元/份，**份量步贡献 +0.0684，其余步为 0**，各步贡献之和 = 总差额且 `consistent=true`。
+2. **单位换算缺失**：`农家炖菜` 的「秘制酱料」以「坛」计，语义映射无换算依据且过敏原未映射。快照 #3 中该行不可解释，质量事件 `missing_conversion` + `missing_allergen`，**不用同名原料或默认值补齐**；可解释比例 2/3。
+3. **等级失配**：`清炒白菜心` 要求一级带根毛菜，系统只有**二级**出成率证据，但存在一级毛重包装报价 Q-R-CB-G1。快照 #4 登记 `grade_mismatch` 事件并明确“毛重包装报价不得折算可用成本”，该行不计价，整菜不可完整解释。
+4. **迟到出成率**：`番茄炒蛋`（快照 #5）的西红柿先只有历史估计出成率 0.72（标注 estimated，不伪装成验收事实）；报表发布后在「覆盖质量」页以验收员身份补传抽样实测 0.68，系统生成**引用原餐期快照的影响版本**，原估计行成本 37.5 与新证据 39.71 及每份差额 +0.0246 分别保留，原快照行保持只读不变。
+5. **同名原料误映射**：`蓝莓山药泥` 的「山药」V1 被误映射到土豆、V2 正确指向山药，两版生效边界同为 2026-11-10。快照 #6 状态为「冲突待确认」，「餐期快照」详情保留 A/B 两套候选关联；数据管理员确认候选 B 后，原快照置 `superseded` 并按正确映射重建可解释快照，**全程不按最后上传时间覆盖**。
+
+关键硬规则的页面落点：
+
+- **可解释成本比例 / 缺失证据 / 不能比较的期间**：「覆盖质量」页逐菜展示进度条、质量事件与不可比较期间；对不可完整解释的两个餐期发起成本桥接会返回 409。
+- **只读溯源**：任一快照详情可展开每行的换算链（采购单位→kg→净用量，含出成率证据类型与批次）、采用报价编号/来源批次/含税毛价与净用量单价。
+- **价格因素桥**：`番茄炒蛋` V1→V2 份量不变、仅西红柿箱价 45→49.5 元，种子已生成第二条成本桥，**价格步贡献 +0.0416，其余步为 0**，演示报价上涨的独立归因。
+
 ## 自动化测试
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests/ -q     # 35 个用例：换算引擎/差额归因/导入续接/市场参考/API 流程
+.venv/bin/python -m pytest tests/ -q     # 54 个用例：原 35 个 + feature-5 新增 19 个
 ```
+
+feature-5 新增 `tests/test_recipe.py`（19 用例）：食谱版本解析与修订链、缺净用量/缺换算/缺过敏原不可补齐、等级失配不折算、选价器区域与有效期、快照只读、迟到证据影响版本、冲突双候选与确认、成本桥固定顺序且贡献和=总差额、不可比较期间拒绝桥接、覆盖质量与 API 权限流程。
 
 前端构建验证：`cd frontend && npm run build`。
 
@@ -82,6 +103,13 @@ cd backend
 | 短装/退货/等级拒收分列；未验收部分不提前算损耗 | `services.py::summarize_acceptances` |
 | 市场参考价按独立卖方归并取中位数、转载去重 | `backend/app/market.py` |
 | 坏行单列、按原文件续接、同号换值保留修订 | `backend/app/importer.py` |
+| 食谱版本按生效时间解析、修订收口与可追溯配方事实 | `backend/app/recipe.py::resolve_recipe/create_recipe_version` |
+| 语义映射绑定采购/成分编码、等级、过敏原、单位换算；同生效时刻保留双候选 | `recipe.py::resolve_mapping_candidates/create_mapping` |
+| 出成率 measured/estimated/missing 三态，估计不伪装成验收事实，缺失不补默认值 | `recipe.py::resolve_yield/yield_point` |
+| 选价按等级/加工状态/区域/有效区间筛选，报价+批次+换算依据固化进只读快照 | `recipe.py::select_quote/build_meal_snapshot` |
+| 缺净用量/换算/过敏原→不可完整解释；等级失配→不折算并记质量事件 | `recipe.py::build_meal_snapshot` |
+| 迟到实测→引用原快照的影响版本，原估计与新证据差额分列 | `recipe.py::register_measured_yield` |
+| 成本桥固定顺序 份量→价格→出成率→规格→映射，贡献和=总差额，不称唯一原因 | `recipe.py::bridge_costs` |
 
 ## 目录结构
 
@@ -93,16 +121,20 @@ cd backend
 │   │   ├── importer.py     # CSV/JSON/快照导入、续接、重解析
 │   │   ├── market.py       # 市场参考价
 │   │   ├── services.py     # 对比/采购依据/验收汇总
-│   │   └── routers/        # API 路由
-│   └── tests/              # pytest（35 用例）
-├── frontend/             # Vue3 + Element Plus
+│   │   ├── recipe.py       # feature-5：食谱事实/选价快照/影响版本/成本桥/覆盖质量
+│   │   ├── seed_recipe.py  # feature-5 种子（五类验收样例）
+│   │   ├── models.py       # 含食谱域 10 张只读事实表
+│   │   └── routers/recipes.py  # feature-5 API
+│   └── tests/              # pytest（54 用例，含 test_recipe.py 19 个）
+├── frontend/             # Vue3 + Element Plus（新增 4 个食谱成本视图）
 ├── samples/              # 随题样例：供应商CSV、净菜JSON、市场快照
 └── docker-compose.yml
 ```
 
 ## 验证结论（实际执行过的验证）
 
-- `pytest`：35/35 通过（换算引擎、差额归因一致性、导入坏行/续接/同号换值/重解析试算、市场中位数去转载、API 决策-验收-偏差全流程）。
-- `npm run build`：构建成功。
-- 本地联调：后端 uvicorn + 前端 vite 代理下，完成 登录→对比→采用→验收→偏差→映射审核→导入→重解析→更正 全旅程验证（见上「本题验证方式」各条数据均来自真实接口返回）。
-- 本环境无 docker，`docker compose` 未实际执行；Compose 中各服务的启动命令与本地已验证命令一致（uvicorn 启动后端、vite 构建 + nginx 托管并代理 /api）。
+- `pytest tests/`：**54/54 通过**（原 35 个换算/归因/导入/市场/API 用例无回归；feature-5 新增 19 个覆盖五类验收样例与全部硬规则）。
+- `npm run build`：构建成功，4 个新视图（食谱事实/餐期快照/成本桥接/覆盖质量）均正常分包。
+- 种子端到端核验：重建库后执行完整种子，确认 7 份餐期快照、4 类质量事件（缺换算/缺过敏原/等级失配/映射冲突）、1 条双候选冲突、2 条迟到证据影响版本、2 条自洽成本桥均按预期生成。
+- API 全流程冒烟（TestClient）：登录鉴权（未登录 401）→ 快照生成 → 冲突确认重建 → 覆盖质量 → 成本桥（不可比较期间返回 409）→ 验收员补传实测生成影响版本，全部返回正确。
+- 本环境无 docker，`docker compose` 未实际执行；Compose 中各服务的启动命令与本地已验证命令一致（uvicorn 启动后端并在启动时建表+导入种子，vite 构建 + nginx 托管并代理 /api）。

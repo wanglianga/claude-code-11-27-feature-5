@@ -9,6 +9,10 @@
         <el-menu-item index="imports" :route="{ name: 'imports' }">导入管理</el-menu-item>
         <el-menu-item index="decisions" :route="{ name: 'decisions' }">采购依据</el-menu-item>
         <el-menu-item index="market" :route="{ name: 'market' }">市场参考价</el-menu-item>
+        <el-menu-item index="recipes" :route="{ name: 'recipes' }">食谱事实</el-menu-item>
+        <el-menu-item index="snapshots" :route="{ name: 'snapshots' }">餐期快照</el-menu-item>
+        <el-menu-item index="bridges" :route="{ name: 'bridges' }">成本桥接</el-menu-item>
+        <el-menu-item index="coverage" :route="{ name: 'coverage' }">覆盖质量</el-menu-item>
       </el-menu>
       <div class="user">
         <el-tag size="small" effect="plain">{{ session.user.role_name }}</el-tag>
